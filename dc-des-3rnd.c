@@ -279,11 +279,11 @@ uint64_t reverse_pc2(uint64_t a)
 
 /* count of pairs. */
 /* [sbox][ixor][oxor] */
-int ppdt[8][64][16];
+int pdt[8][64][16];
 
-/* list of pairs. */
-/* [sbox][ixor][oxor][pair] */
-int ppdtp [8][64][16][64];
+/* list of input values (unfolded pairs with duplicates removed. */
+/* [sbox][ixor][oxor][inval] */
+int pdtp [8][64][16][64];
 
 char sbox_lookup(int box, char addr)
 {
@@ -296,7 +296,7 @@ char sbox_lookup(int box, char addr)
 	return sbox[box][row * 16 + col];
 }
 
-/* Partial Pairs XOR Distribution Table. */
+/* Pairs XOR Distribution Tables. */
 void dtab()
 {
 	int i, j, k, ix, ox;
@@ -307,10 +307,10 @@ void dtab()
 			for (j = 0; j < 64; ++j) {
 				ix = i ^ j;
 				ox = sbox_lookup(box, i) ^ sbox_lookup(box, j);
-				k = ppdt[box][ix][ox];
-				ppdtp[box][ix][ox][k] = i;
+				k = pdt[box][ix][ox];
+				pdtp[box][ix][ox][k] = i;
 				++k;
-				ppdt[box][ix][ox] = k;
+				pdt[box][ix][ox] = k;
 			}
 		}
 	}
@@ -485,9 +485,9 @@ char find_k3(struct dc3_ctx *c)
 		ix = ixor & 0x3f;
 		ox = oxor & 0xf;
 
-		skc = ppdt[i][ix][ox];
+		skc = pdt[i][ix][ox];
 		for (j = 0; j < skc; ++j) {
-			sk[j] = ppdtp[i][ix][ox][j] ^ (se[0] & 0x3f);
+			sk[j] = pdtp[i][ix][ox][j] ^ (se[0] & 0x3f);
 		}
 
 		if (c->skc[i] == 0) {
