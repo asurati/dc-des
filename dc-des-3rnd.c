@@ -129,70 +129,18 @@ char find_k3(struct dc3_ctx *c)
 
 void find_key(struct dc3_ctx *c, int nr)
 {
-	int i, j;
+	int i;
 	uint64_t ks[17];
 	uint64_t ct[2];
 	uint64_t key, mask, ck;
-	uint32_t cc[2], dd[2];
-	uint8_t shifts[17] = {
-		0, /* unused. */
-		1,1,2,2,2,2,2,2,
-		1,2,2,2,2,2,2,1
-	};
-	uint8_t unk_bits_pc2[] = {
-		 9,18,22,25,35,38,43,54
-	};
-
-	key = reverse_pc2(c->k3);
 
 	/* k3 (48 bits) to c3d3 (56 bits) cannot provide the values for
 	 * unk_bits positions. Create and trace a mask of these unknown bits.
 	 */
+
+	key = c->k3;
 	mask = 0;
-	for (i = 0; i < 8; ++i) {
-		j = unk_bits_pc2[i] - 1;
-		mask |= 1ul << (55 - j);
-	}
-
-	/* Perform the reversal of the shifts on the mask. It provides the
-	 * mask of the unknown bits in c0d0.
-	 * Perform the reversal of the shifts on the key. It provides c0d0.
-	 */
-	cc[0] = mask >> 28;
-	dd[0] = mask & 0x0fffffff;
-	cc[1] = key >> 28;
-	dd[1] = key & 0x0fffffff;
-
-	for (i = nr; i > 0; --i) {
-		cc[0] = (cc[0] >> 1) | (cc[0] << 27);
-		dd[0] = (dd[0] >> 1) | (dd[0] << 27);
-		cc[1] = (cc[1] >> 1) | (cc[1] << 27);
-		dd[1] = (dd[1] >> 1) | (dd[1] << 27);
-		if (shifts[i] == 2) {
-			cc[0] = (cc[0] >> 1) | (cc[0] << 27);
-			dd[0] = (dd[0] >> 1) | (dd[0] << 27);
-			cc[1] = (cc[1] >> 1) | (cc[1] << 27);
-			dd[1] = (dd[1] >> 1) | (dd[1] << 27);
-		}
-		cc[0] &= 0x0fffffff;
-		dd[0] &= 0x0fffffff;
-		cc[1] &= 0x0fffffff;
-		dd[1] &= 0x0fffffff;
-	}
-
-	/* We have c0d0 and the addresses of the unknown bits within c0d0.
-	 */
-	mask = cc[0];
-	mask <<= 28;
-	mask |= dd[0];
-
-	key = cc[1];
-	key <<= 28;
-	key |= dd[1];
-
-	/* Reverse pc1 on both the key and the mask. */
-	mask = reverse_pc1(mask);
-	key = reverse_pc1(key);
+	reverse_ksa(&key, &mask, nr);
 
 	/* The 56-bit key thus generated is missing 8 bits whose addresses
 	 * are given by the mask. Bruteforce and test. */
