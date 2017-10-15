@@ -74,8 +74,8 @@ void find_key(const struct dc4_ctx *c, int nr)
 	}
 
 	/* Work on the 28 available bits of the output difference and 48 (all)
-	 * available bits of the input difference, to determine the 42 bits of
-	 * k4, corresponding to the key bits entering S2..S8.
+	 * available bits of the input, to determine the 42 bits of k4,
+	 * corresponding to the key bits entering S2..S8.
 	 *
 	 * For each SBOX and for each possible key entering that SBOX, calculate
 	 * the number of ciphertext pairs which are consistent with the
@@ -83,17 +83,20 @@ void find_key(const struct dc4_ctx *c, int nr)
 	 */
 
 	k4 = 0;
+
+	/* For each sbox S8 to S2. */
 	for (i = 7; i > 0; --i) {
+		/* Current SBOX i = S(i+1). */
 		m = -1;
-		//for each key of the given sbox
+		/* For each key 0 to 63. */
 		for (j = 0; j < 64; ++j) {
 			l = 0;
-			//for each ct pair
+			/* For each ct pair. */
 			for (k = 0; k < NP; ++k) {
 				char x, y, z;
 
 				/* Find the 4-bit output difference exiting
-				 * the SBOX i, for the current pair k.
+				 * the SBOX, for the current pair k.
 				 */
 				ox = oxor[k] >> ((7 - i) * 4);
 				ox &= 0xf;
@@ -102,17 +105,17 @@ void find_key(const struct dc4_ctx *c, int nr)
 				 * expansion but before the application of the
 				 * key bits. Then XOR in the current key bits j.
 				 *
-				 * The result is a pair of inputs to the SBOX i.
+				 * The result is a pair of inputs to the SBOX.
 				 */
 				x = ((se[k][0] >> (7 - i) * 6) & 0x3f) ^ j;
 				y = ((se[k][1] >> (7 - i) * 6) & 0x3f) ^ j;
 
-				/* Lookup the SBOX i and calculate the output
+				/* Lookup the SBOX and calculate the output
 				 * difference.
 				 */
 				z = sbox_lookup(i, x) ^ sbox_lookup(i, y);
 
-				/* If j is the correct key entering the SBOX i,
+				/* If j is the correct key entering the SBOX,
 				 * *all* pairs will force the condition below to
 				 * satisfy. i.e. the count at the end of this
 				 * loop must be equal to NP, for the correct key.
@@ -124,11 +127,11 @@ void find_key(const struct dc4_ctx *c, int nr)
 			if (l == NP) {
 				/* Increase NP, and compile and run again, if
 				 * the assert fires, i.e. if we find multiple
-				 * candidate 6-bit key for the SBOX i.
+				 * candidate 6-bit key for the SBOX.
 				 */
 				assert(m == -1);
 
-				/* Save the key bits entering the SBOX i. */
+				/* Save the key bits entering the SBOX. */
 				m = j;
 			}
 		}
@@ -137,14 +140,14 @@ void find_key(const struct dc4_ctx *c, int nr)
 		k4 |= ((uint64_t)m << (7 - i) * 6);
 	}
 
-	/* k4 does not contain the key bits for SBOX 1. Create and trace a mask
+	/* k4 does not contain the key bits for S1. Create and trace a mask
 	 * of the unknown bits, which are later found using bruteforce.
 	 */
 	mask = 0xfc0000000000ul;
 	key = k4;
 
 	reverse_ksa(&key, &mask, nr);
-	/* mask must have 14 bits set - 6 unknown bits, which enter SBOX1 in
+	/* mask must have 14 bits set - 6 unknown bits, which enter S1 in
 	 * round 4, and the 8 missing bits due to reverse PC2.
 	 */
 
