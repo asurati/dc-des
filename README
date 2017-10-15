@@ -1,3 +1,4 @@
 About:
 
-A C program to carry out differential cryptanalysis on 3-round DES.
+C programs to carry out differential cryptanalysis on reduced-rounds DES.
+See also https://krypto.netlify.com/
