@@ -197,6 +197,17 @@ void find_key(const struct dc4_ctx *c, int nr)
 	 *
 	 * TODO: Investigate the reason for such a relation between the
 	 * particular plaintext difference and the 4 keys.
+	 *
+	 * See http://krypto.netlify.com for some description.
+	 */
+
+
+	/* In this particular attack, the 6 key bits of S1 were bruteforced.
+	 * An alternative could be to select another set of 16 plaintexts with
+	 * the characteristic 0x0222222200000000 (also from the paper) and to
+	 * use the same method as implemented here on them. A complete k4 subkey
+	 * then becomes available and only 8 remaining bits need to be
+	 * discovered.
 	 */
 }
 
