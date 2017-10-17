@@ -167,8 +167,6 @@ uint64_t apply_char(const struct dc4_ctx *c, int ch)
 		oxor[i]  = reverse_p(oxor[i]);
 	}
 
-	/* Determine the SBOXes the current characteristic handles. */
-
 	t = apply_ip(c->ht.ch[ch]);
 
 	/* The characteristics chosen for the 4 round attack are such that, in
@@ -178,7 +176,7 @@ uint64_t apply_char(const struct dc4_ctx *c, int ch)
 	t = expand(t >> 32);
 	key = 0;
 	mask = 0;
-	/* For each sbox S8 to S2. */
+	/* For each sbox S8 to S1. */
 	for (i = 7; i >= 0; --i, t >>= 6) {
 		/* Ignore any SBOX whose input difference is not zero. */
 		if (t & 0x3f) {
