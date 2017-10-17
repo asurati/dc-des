@@ -153,7 +153,7 @@ uint64_t apply_char(const struct dc4_ctx *c, int ch)
 		ct[i][0] = apply_ip(ct[i][0]);
 		ct[i][1] = apply_ip(ct[i][1]);
 
-		/* right halves of the ciphertexts are the input.
+		/* right halves of the ciphertexts are the inputs.
 		 * Expand them.
 		 */
 		se[i][0] = expand(ct[i][0]);
@@ -167,12 +167,12 @@ uint64_t apply_char(const struct dc4_ctx *c, int ch)
 		oxor[i]  = reverse_p(oxor[i]);
 	}
 
-	/* Determine which SBOXes does the current characteristic handle. */
+	/* Determine the SBOXes the current characteristic handles. */
 
 	t = apply_ip(c->ht.ch[ch]);
 
 	/* The characteristics chosen for the 4 round attack are such that, in
-	 * round 1, the left half of the difference is the input to the round
+	 * round 2, the left half of the difference is the input to the round
 	 * function.
 	 */
 	t = expand(t >> 32);
