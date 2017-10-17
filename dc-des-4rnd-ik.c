@@ -55,7 +55,7 @@ struct dc4_ctx {
 void gen_hextet(struct hextet *ht)
 {
 	int i, j, k;
-	int c[4];
+	int c[4], ch;
 	uint64_t pt;
 	uint8_t p[8];
 
@@ -100,27 +100,21 @@ void gen_hextet(struct hextet *ht)
 	for (i = 0; i < NT; ++i) {
 		for (j = i + 1; j < NT; ++j) {
 			k = i ^ j;
-			if (k == 8) {
-				/* ch0. */
-				ht->pairs[0][c[0]][0] = i;
-				ht->pairs[0][c[0]][1] = j;
-				++c[0];
-			} else if (k == 4) {
-				/* ch1. */
-				ht->pairs[1][c[1]][0] = i;
-				ht->pairs[1][c[1]][1] = j;
-				++c[1];
-			} else if (k == 2) {
-				/* ch2. */
-				ht->pairs[2][c[2]][0] = i;
-				ht->pairs[2][c[2]][1] = j;
-				++c[2];
-			} else if (k == 1) {
-				/* ch3. */
-				ht->pairs[3][c[3]][0] = i;
-				ht->pairs[3][c[3]][1] = j;
-				++c[3];
-			}
+
+			if (k == 8)
+				ch = 0;
+			else if (k == 4)
+				ch = 1;
+			else if (k == 2)
+				ch = 2;
+			else if (k == 1)
+				ch = 3;
+			else
+				continue;
+
+			ht->pairs[ch][c[ch]][0] = i;
+			ht->pairs[ch][c[ch]][1] = j;
+			++c[ch];
 		}
 	}
 
