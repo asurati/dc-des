@@ -16,8 +16,8 @@
 
 
 /* 4-Round-DES-IK Differential Cryptanalysis through chosen-plaintext attacks.
- * IK is Independent subKeys, where the subkeys of each round are treated as
- * mutually independent.
+ * IK is Independent subKeys, where the subkeys are treated as mutually
+ * independent and unrelated to the 56-bit DES key.
  *
  * Based on the paper by Eli Biham and Adi Shamir.
  */
@@ -25,6 +25,7 @@
 /* Assumes little-endian, LP64 model. */
 
 #include <assert.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -37,10 +38,11 @@
 #define NT	16
 #define NP	(NT >> 1)
 
+static uint64_t g_k[4];
+
 struct hextet {
 	uint64_t ch[4];
 	uint64_t pt[NT];
-	uint64_t ct[NT];
 
 	/* [char][pair][ele]. */
 	unsigned char pairs[4][NP][2];
@@ -49,10 +51,91 @@ struct hextet {
 struct dc4_ctx {
 	struct hextet ht;
 	uint64_t key;
-	uint64_t seed;
+	uint64_t ks[17];
 };
 
-void gen_hextet(struct hextet *ht)
+struct sbox_key {
+	int c;
+	uint8_t keys[64];
+};
+
+static void split_subkey(uint8_t keys[8], uint64_t key)
+{
+	int i;
+
+	for (i = 7; i >= 0; --i, key >>= 6)
+		keys[i] = key & 0x3f;
+}
+
+static uint64_t combine_subkey(const uint8_t keys[8])
+{
+	int i;
+	uint64_t key;
+
+	key = 0;
+	for (i = 0; i < 8; ++i) {
+		key <<= 6;
+		key |= keys[i];
+	}
+
+	return key;
+}
+
+static uint64_t next_subkey(int ki[8], const struct sbox_key sk[8])
+{
+	int i;
+	uint8_t keys[8];
+
+	/* Ensure nonzero limits for the counters. */
+	for (i = 0; i < 8; ++i)
+		assert(sk[i].c);
+
+	for (i = 0; i < 8; ++i)
+		if (ki[i] != -1)
+			break;
+
+	/* If all the entries are -1, this is the initial call. */
+	if (i == 8) {
+		memset(ki, 0, sizeof(int) * 8);
+	} else {
+
+		for (i = 7; i >= 0; --i) {
+			++ki[i];
+			if (ki[i] < sk[i].c)
+				break;
+			ki[i] = 0;
+		}
+
+		/* Overflow. */
+		if (i == -1)
+			return (uint64_t)-1;
+	}
+
+	for (i = 0; i < 8; ++i)
+		keys[i] = sk[i].keys[ki[i]];
+
+	return combine_subkey(keys);
+}
+
+static bool contains(const struct sbox_key sk[8], uint64_t key)
+{
+	int i, j;
+	uint8_t keys[8];
+
+	split_subkey(keys, key);
+
+	for (i = 0; i < 8; ++i) {
+		for (j = 0; j < sk[i].c; ++j)
+			if (sk[i].keys[j] == keys[i])
+				break;
+		if (j == sk[i].c)
+			return false;
+	}
+
+	return true;
+}
+
+static void gen_hextet(struct hextet *ht)
 {
 	int i, j, k;
 	int c[4], ch;
@@ -132,60 +215,39 @@ void gen_hextet(struct hextet *ht)
 	}
 }
 
-uint64_t apply_char(const struct dc4_ctx *c, int ch)
+/* Bruteforce all keys for each sbox set in sbox_mask. */
+/* The function should not memset sk to 0. */
+static bool bf_sbox_key(struct sbox_key sk[8], const uint64_t cta[NT],
+		 const struct dc4_ctx *c, int ch, uint32_t xor,
+		 uint8_t sbox_mask)
 {
-	int i, j, k, x, y, z, m, l, ox;
+	int i, j, k, x, y, z, l, ox;
+	uint64_t se[NP][2];
 	uint32_t oxor[NP];
-	uint64_t se[NP][2], t, key;
-	uint64_t ct[NP][2], mask;
-
-	assert(ch == 0 || ch == 1);
 
 	for (i = 0; i < NP; ++i) {
 		/* Get the ct pair under the given characterstic. */
 		x = c->ht.pairs[ch][i][0];
 		y = c->ht.pairs[ch][i][1];
-		ct[i][0] = c->ht.ct[x];
-		ct[i][1] = c->ht.ct[y];
-
-		/* IPI(-1) = IP of the CT pair contains the input to the
-		 * 4th round. */
-		ct[i][0] = apply_ip(ct[i][0]);
-		ct[i][1] = apply_ip(ct[i][1]);
 
 		/* right halves of the ciphertexts are the inputs.
 		 * Expand them.
 		 */
-		se[i][0] = expand(ct[i][0]);
-		se[i][1] = expand(ct[i][1]);
+		se[i][0] = expand(cta[x]);
+		se[i][1] = expand(cta[y]);
 
-		/* D' = B' ^ l'. Calculate D'. Those SBOXes for which the output
-		 * difference B' has 0, have their key bits exposed.
-		 */
-		oxor[i]  = ct[i][0] >> 32;
-		oxor[i] ^= ct[i][1] >> 32;
+		oxor[i]  = cta[x] >> 32;
+		oxor[i] ^= cta[y] >> 32;
+		oxor[i] ^= xor;
 		oxor[i]  = reverse_p(oxor[i]);
 	}
 
-	t = apply_ip(c->ht.ch[ch]);
-
-	/* The characteristics chosen for the 4 round attack are such that, in
-	 * round 2, the left half of the difference is the input to the round
-	 * function.
-	 */
-	t = expand(t >> 32);
-	key = 0;
-	mask = 0;
 	/* For each sbox S8 to S1. */
-	for (i = 7; i >= 0; --i, t >>= 6) {
-		/* Ignore any SBOX whose input difference is not zero. */
-		if (t & 0x3f) {
-			/* Set the mask of the unknown key bits. */
-			mask |= 0x3ful << ((7 - i) * 6);
+	for (i = 7; i >= 0; --i, sbox_mask >>= 1) {
+		if ((sbox_mask & 1) == 0)
 			continue;
-		}
+
 		/* Current SBOX i = S(i+1). */
-		m = -1;
 		/* For each key 0 to 63. */
 		for (j = 0; j < 64; ++j) {
 			l = 0;
@@ -221,136 +283,268 @@ uint64_t apply_char(const struct dc4_ctx *c, int ch)
 			}
 
 			if (l == NP) {
-				/* Increase NP, and compile and run again, if
-				 * the assert fires, i.e. if we find multiple
-				 * candidate 6-bit key for the SBOX.
-				 */
-				if (m != -1) {
-					printf("multiple subkeys for sbox %d\n",
-					       i + 1);
-					/* The seed and the key are all one
-					 * needs to recreate the rare situation.
-					 */
-					printf("seed %lx, key %lx\n", c->seed,
-					       c->key);
-				}
-
-				assert(m == -1);
-
-				/* Save the key bits entering the SBOX. */
-				m = j;
+				x = sk[i].c;
+				sk[i].keys[x] = j;
+				++sk[i].c;
 			}
 		}
 
-		assert(m != -1);
-		key |= ((uint64_t)m << (7 - i) * 6);
+		/* For the current SBOX, no key was found, possibly due to
+		 * incorrect ct. Return error. */
+		if (sk[i].c == 0)
+			return false;
 	}
 
-	return key;
+	return true;
 }
 
-void find_k4(const struct dc4_ctx *c, int nr)
+static bool apply_char_k4(struct sbox_key sk[8], const uint64_t cta[NT],
+		   const struct dc4_ctx *c, int ch)
 {
-	uint64_t k4;
-	k4  = apply_char(c, 0);
-	k4 |= apply_char(c, 1);
+	int i;
+	uint8_t smask;
+	uint64_t t;
 
-	/* TODO 'Peel off' the effect of the 4th round and apply the 2nd
-	 * characteristic (ch1) to the 3 round cryptosystem to recover k3.
+	assert(ch == 0 || ch == 1);
+	t = apply_ip(c->ht.ch[ch]);
+
+	/* The characteristics chosen for the 4 round attack are such that, in
+	 * round 2, the left half of the difference is the input to the round
+	 * function.
 	 */
+	t = expand(t >> 32);
+	smask = 0;
+	for (i = 7; i >= 0; --i, t >>= 6) {
+		/* Ignore any SBOX whose input difference is non-zero. */
+		if (t & 0x3f)
+			continue;
+		smask |= 1 << (7 - i);
+	}
 
-	/* Not yet complete. */
+	return bf_sbox_key(sk, cta, c, ch, 0, smask);
 }
 
-#if 0
-void find_key(const struct dc4_ctx *c, int nr)
+static bool apply_char_k3(struct sbox_key sk[8], const uint64_t cta[NT],
+		   const struct dc4_ctx *c, int ch)
 {
-	int i, j, k, l, m;
-	int ox;
-	uint64_t ct[NP][2], ck;
-	uint64_t pt0, pt1, ks[17];
-	uint32_t oxor[NP];
-	uint64_t se[NP][2], k4, key;
+	uint64_t t;
 
-	uint64_t mask;
+	assert(ch == 1);
+	t = apply_ip(c->ht.ch[ch]);
 
-	/* k4 does not contain the key bits for S1. Create and trace a mask
-	 * of the unknown bits, which are later found using bruteforce.
-	 */
-	mask = 0xfc0000000000ul;
-	key = k4;
+	return bf_sbox_key(sk, cta, c, ch, t >> 32, 0xff);
+}
 
-	reverse_ksa(&key, &mask, nr);
-	/* mask must have 14 bits set - 6 unknown bits, which enter S1 in
-	 * round 4, and the 8 missing bits due to reverse PC2.
-	 */
+static bool apply_char_k2(struct sbox_key sk[8], const uint64_t cta[NT],
+		   const struct dc4_ctx *c, int ch)
+{
+	uint64_t t;
 
-	/* Bruteforce. */
-	for (i = 0; i < (1 << 14); ++i) {
-		ck = apply_mask(key, mask, i, 14);
-		ksa(ks, ck);
-		for (j = 0; j < NP; ++j) {
-			pt0 = dec(c->ct[j][0], ks, nr);
-			pt1 = dec(c->ct[j][1], ks, nr);
-			if ((pt0 ^ pt1) != c->ixor)
-				break;
+	t = apply_ip(c->ht.ch[ch]);
+
+	return bf_sbox_key(sk, cta, c, ch, t, 0xff);
+}
+
+static bool apply_char_k1(struct sbox_key sk[8], const uint64_t cta[NT],
+		   const struct dc4_ctx *c, int ch)
+{
+	uint64_t t;
+
+	t = apply_ip(c->ht.ch[ch]);
+
+	return bf_sbox_key(sk, cta, c, ch, t >> 32, 0xff);
+}
+
+static void peel(uint64_t ctc[NT], const uint64_t cta[NT], uint64_t key)
+{
+	int i;
+	uint64_t ct;
+	uint32_t lco, rco, lci, rci, lpo, rpo;
+
+	for (i = 0; i < NT; ++i) {
+		ct = cta[i];
+
+		lco = ct >> 32;
+		rco = ct;
+
+		lci = lco ^ desf(rco, key);
+		rci = rco;
+
+		lpo = rci;
+		rpo = lci;
+
+		ct = lpo;
+		ct <<= 32;
+		ct |= rpo;
+
+		ctc[i] = ct;
+	}
+}
+
+static bool find_k1(const uint64_t cta[NT], const struct dc4_ctx *c)
+{
+	bool bret, found;
+	int i, ki[8], ch, x, y;
+	uint64_t t;
+	uint64_t ctc[NT];
+	struct sbox_key sk[8];
+
+	memset(sk, 0, sizeof(sk));
+	memset(ki, 0xff, sizeof(ki));
+
+	if (!apply_char_k1(sk, cta, c, 3))
+		return false;
+
+	found = false;
+
+	while (1) {
+		g_k[0] = next_subkey(ki, sk);
+		if (g_k[0] == (uint64_t)-1)
+			break;
+		peel(ctc, cta, g_k[0]);
+
+		/* The reversal performed in peel needs to be undone for the
+		 * first round. Reverse again to undo.
+		 */
+		for (i = 0; i < NT; ++i)
+			ctc[i] = ((ctc[i] & 0xfffffffful) << 32) |
+				(ctc[i] >> 32);
+
+		/* ctc is the array of plaintexts (post IP). Select only those
+		 * subkeys for which the plaintext difference matches the
+		 * corresponding characteristics chosen.
+		 */
+
+		bret = true;
+		for (ch = 0; ch < 4 && bret; ++ch) {
+			for (i = 0; i < NP && bret; ++i) {
+				x = c->ht.pairs[ch][i][0];
+				y = c->ht.pairs[ch][i][1];
+				t = ctc[x] ^ ctc[y];
+				if (t != apply_ip(c->ht.ch[ch]))
+					bret = false;
+			}
 		}
 
-		if (j == NP) {
-			pt0 = dec(c->ct[0][0], ks, nr);
-			if (c->pt == pt0) {
-				assert(ck == c->key);
-				printf("ck %lx\n", ck);
-			}
-			/*
-			for (j = 0; j < NP; ++j) {
-				pt0 = dec(c->ct[j][0], ks, nr);
-				pt1 = dec(c->ct[j][1], ks, nr);
-				assert((pt0 ^ pt1) == c->ixor);
-			}
-			*/
+		/* Further reduce the set of possible subkeys by selecting only
+		 * those under which the unmodified plaintext (i.e. the one
+		 * with no charactersitic XOR'd) matches the corresponding
+		 * decryption.
+		 */
+		if (bret && ctc[0] == apply_ip(c->ht.pt[0])) {
+			found = true;
+			printf("k1 %lx, k2 %lx, k3 %lx, k4 %lx\n",
+			       g_k[0], g_k[1], g_k[2], g_k[3]);
 		}
 	}
 
-	/* If the only check made during the bruteforce procedure is on
-	 * plaintext difference, then there are 4 related keys which emerge (one
-	 * of them is indeed the target key).
-	 *
-	 * If the target key is labelled key0, then the 3 other keys are related
-	 * to it in the following manner:
-	 *
-	 * key1 = key0 ^ 0x00000010000000
-	 * key2 = key0 ^ 0x40000000000000
-	 * key3 = key0 ^ 0x40000010000000
-	 *
-	 * These 4 keys are indistinguishable when looking only at the plaintext
-	 * differences. Comparing the plaintexts themselves (original plaintext
-	 * generated when the attack began, and the plaintext generated by the
-	 * decryption above) does list a single key (the target key) as the
-	 * result.
-	 *
-	 * TODO: Investigate the reason for such a relation between the
-	 * particular plaintext difference and the 4 keys.
-	 *
-	 * See http://krypto.netlify.com for some description.
-	 */
-
-
-	/* In this particular attack, the 6 key bits of S1 were bruteforced.
-	 * An alternative could be to select another set of 16 plaintexts with
-	 * the characteristic 0x0222222200000000 (also from the paper) and to
-	 * use the same method as implemented here on them. A complete k4 subkey
-	 * then becomes available and only 8 remaining bits need to be
-	 * discovered.
-	 */
+	return found;
 }
-#endif
+
+static bool find_k2(const uint64_t cta[NT], const struct dc4_ctx *c)
+{
+	bool found;
+	int ki[8];
+	uint64_t ctc[NT];
+	struct sbox_key sk[8];
+
+	memset(sk, 0, sizeof(sk));
+	memset(ki, 0xff, sizeof(ki));
+
+	if (!apply_char_k2(sk, cta, c, 2))
+		return false;
+
+	found = false;
+
+	while (1) {
+		g_k[1] = next_subkey(ki, sk);
+		if (g_k[1] == (uint64_t)-1)
+			break;
+		peel(ctc, cta, g_k[1]);
+		if (find_k1(ctc, c))
+			found = true;
+	}
+
+	return found;
+}
+
+static bool find_k3(const uint64_t cta[NT], const struct dc4_ctx *c)
+{
+	bool found;
+	int ki[8];
+	uint64_t ctc[NT];
+	struct sbox_key sk[8];
+
+	memset(sk, 0, sizeof(sk));
+	memset(ki, 0xff, sizeof(ki));
+
+	/* If apply_char returns false, the subkey for the current + 1 round is
+	 * likely to be incorrect, which might have resulted in the incorrect
+	 * decryption/peel of the current + 1 round. Return to the current + 1
+	 * round to try the next subkey at that round.
+	 */
+	if (!apply_char_k3(sk, cta, c, 1))
+		return false;
+
+	/* Found at least one valid subkey for the current round. Validity
+	 * implies that subkey allowed correct decryptions at this and lower
+	 * rounds. A correct decryption is detected when the pt is compared with
+	 * the decryption at round 1.*/
+	found = false;
+
+	while (1) {
+		g_k[2] = next_subkey(ki, sk);
+		if (g_k[2] == (uint64_t)-1)
+			break;
+		peel(ctc, cta, g_k[2]);
+		if (find_k2(ctc, c))
+			found = true;
+	}
+
+	return found;
+}
+
+static void find_k4(const uint64_t cta[NT], const struct dc4_ctx *c)
+{
+	bool bret;
+	int ki[8];
+	uint64_t ctc[NT];
+	struct sbox_key sk[8];
+
+	memset(sk, 0, sizeof(sk));
+	memset(ki, 0xff, sizeof(ki));
+
+	bret = apply_char_k4(sk, cta, c, 0);
+	assert(bret);
+
+	bret = apply_char_k4(sk, cta, c, 1);
+	assert(bret);
+
+	/* It is required that, among the subkeys found for the last round,
+	 * the target subkey be one of them.
+	 */
+	assert(contains(sk, c->ks[4]));
+
+	bret = false;
+	while (1) {
+		g_k[3] = next_subkey(ki, sk);
+		if (g_k[3] == (uint64_t)-1)
+			break;
+		peel(ctc, cta, g_k[3]);
+
+		if (find_k3(ctc, c))
+			bret = true;
+	}
+
+	/* If a set of valid subkeys are not found, fire the assert. */
+	assert(bret);
+}
 
 int main()
 {
 	int i;
+	uint64_t cta[NT];
 	struct dc4_ctx c;
-	uint64_t ks[17];
 	/* Fix a temporary key while work-in-progress. */
 	uint8_t key[8] = {
 		0x9a,0x8c,0xe6,0x3a,0x60,0xf4,0xde,0x36
@@ -358,8 +552,11 @@ int main()
 
 	memset(&c, 0, sizeof(c));
 
-	c.seed = time(NULL);
-	srand(c.seed);
+	/* Override the fixed key. */
+	assert(getrandom(key, 8, 0) == 8);
+
+	/* Seed the RNG used to generate the plaintext bytes. */
+	srand(time(NULL));
 
 	c.key = htobe64(*(const uint64_t *)key);
 	/* Zero the don't care bits within the key, for easier comparisons
@@ -367,17 +564,23 @@ int main()
 	 */
 	c.key &= ~DES_KEY_XCARE_MASK;
 
-	/* We still generate the subkeys using the DES key schedule. Thus the
+	/* We still generate the subkeys using the DES key schedule. Thus, the
 	 * subkeys are not really independent. But during the attack, the
 	 * reverse key schedule is not invoked, thus treating the subkeys as
-	 * independent.
+	 * mutually independent and unrelated to the 56-bit DES key.
+	 *
+	 * The attack does compare the keys found with the keys generated, to
+	 * ensure that a failure is flagged by the firing of asserts.
 	 */
-	ksa(ks, c.key);
+	ksa(c.ks, c.key);
 
 	gen_hextet(&c.ht);
-	for (i = 0; i < NT; ++i)
-		c.ht.ct[i] = enc(c.ht.pt[i], ks, 4);
+	for (i = 0; i < NT; ++i) {
+		cta[i] = enc(c.ht.pt[i], c.ks, 4);
+		/* Reverse the IPI effect of the enc. */
+		cta[i] = apply_ip(cta[i]);
+	}
 
-	find_k4(&c, 4);
+	find_k4(cta, &c);
 	return 0;
 }
