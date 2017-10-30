@@ -214,14 +214,16 @@ struct stack_entry {
 /* Find a largest possible set of pairs all of which suggest
  * some common key value.
  */
-static int find_pairs_set(int clq[NP], const uint64_t km[NP][8], uint8_t smask)
+static bool find_pairs_set(uint64_t res[8], const uint64_t km[NP][8],
+			   uint8_t smask)
 {
-	int i, j, l, ret;
+	bool found;
+	int i, j, l;
 	int tos, max_tos;
 
 	tos = max_tos = -1;
+	found = false;
 
-	ret = -1;
 	l = 1;
 	++tos;
 	stack[tos].ix = 0;
@@ -261,7 +263,7 @@ static int find_pairs_set(int clq[NP], const uint64_t km[NP][8], uint8_t smask)
 				continue;
 			}
 
-			/* Skip results which lists multiple keys for any
+			/* Skip results which list multiple keys for any
 			 * SBOX.
 			 */
 			for (i = 0; i < 8; ++i)
@@ -272,9 +274,9 @@ static int find_pairs_set(int clq[NP], const uint64_t km[NP][8], uint8_t smask)
 			 * buffer.
 			 */
 			if (i == 8) {
-				for (i = 0; i <= tos; ++i)
-					clq[i] = stack[i].ix;
-				ret = tos + 1;
+				memcpy(res, stack[tos].res,
+				       8 * sizeof(uint64_t));
+				found = true;
 			}
 		} else {
 			if (tos > 0) {
@@ -291,20 +293,20 @@ static int find_pairs_set(int clq[NP], const uint64_t km[NP][8], uint8_t smask)
 		}
 	}
 
-	return ret;
+	return found;
 }
 
 static void find_key(const uint64_t cta[NT], const struct dc6_ctx *c)
 {
-	int i, j, l;
-	uint64_t km[NP][8], res[2][8], k6, mask, t, key, ck, pt;
+	int i, ki[8];
+	uint64_t km[NP][8], res[2][8], mask, key, ck, pt;
 	uint8_t smask[2];
-	int set[NP];
 	uint64_t ks[17];
+	struct sbox_key sk[8];
 
 	/*
-	 *      s2       s5 s6 s7 s8
-	 *   s1 s2    s4 s5 s6
+	 *0:      s2       s5 s6 s7 s8
+	 *1:   s1 s2    s4 s5 s6
 	 *
 	 */
 
@@ -313,52 +315,96 @@ static void find_key(const uint64_t cta[NT], const struct dc6_ctx *c)
 	/* Apply Omega1. */
 	memset(km, 0, sizeof(km));
 	smask[0] = bf_sbox_key(km, cta, c, 0);
-	l = find_pairs_set(set, km, smask[0]);
-	for (i = 0; i < l; ++i)
-		for (j = 0; j < 8; ++j)
-			res[0][j] &= km[set[i]][j];
+	assert(find_pairs_set(res[0], km, smask[0]));
 
 	/* Apply Omega2. */
 	memset(km, 0, sizeof(km));
 	smask[1] = bf_sbox_key(km, cta, c, 1);
-	l = find_pairs_set(set, km, smask[1]);
-	for (i = 0; i < l; ++i)
-		for (j = 0; j < 8; ++j)
-			res[1][j] &= km[set[i]][j];
+	assert(find_pairs_set(res[1], km, smask[1]));
 
-	/* S2, S5, S6 must be the same. */
-	assert(res[0][1] == res[1][1]);
-	assert(res[0][4] == res[1][4]);
-	assert(res[0][5] == res[1][5]);
+	/* Setup the possible subkeys for each SBOX. */
 
-	k6 = 0;
-	for (i = 0; i < 8; ++i) {
-		if (smask[0] & (1 << (7 - i)))
-			continue;
-		t = 0x3f - bsr(res[0][i]);
-		k6 |= t << (7 - i) * 6;
+	/* S3 is unknown. */
+	sk[2].c = 1;
+	sk[2].keys[0] = 0;
+
+	/* S1. */
+	sk[0].c = 1;
+	sk[0].keys[0] = 0x3f - bsr(res[1][0]);
+
+	/* S4. */
+	sk[3].c = 1;
+	sk[3].keys[0] = 0x3f - bsr(res[1][3]);
+
+	/* S7. */
+	sk[6].c = 1;
+	sk[6].keys[0] = 0x3f - bsr(res[0][6]);
+
+	/* S8. */
+	sk[7].c = 1;
+	sk[7].keys[0] = 0x3f - bsr(res[0][7]);
+
+	/* S2. */
+	if (res[0][1] == res[1][1]) {
+		sk[1].c = 1;
+		sk[1].keys[0] = 0x3f - bsr(res[0][1]);
+	} else {
+		sk[1].c = 2;
+		sk[1].keys[0] = 0x3f - bsr(res[0][1]);
+		sk[1].keys[1] = 0x3f - bsr(res[1][1]);
 	}
 
-	for (i = 0; i < 8; ++i) {
-		if (smask[1] & (1 << (7 - i)))
-			continue;
-		t = 0x3f - bsr(res[1][i]);
-		k6 |= t << (7 - i) * 6;
+	/* S5. */
+	if (res[0][4] == res[1][4]) {
+		sk[4].c = 1;
+		sk[4].keys[0] = 0x3f - bsr(res[0][4]);
+	} else {
+		sk[4].c = 2;
+		sk[4].keys[0] = 0x3f - bsr(res[0][4]);
+		sk[4].keys[1] = 0x3f - bsr(res[1][4]);
 	}
 
-	/* S3 is not available. Bruteforce. */
-	mask = 0xfc0000000ul;
-	key = k6;
-	reverse_ksa(&key, &mask, 6);
-	for (i = 0; i < (1 << 14); ++i) {
-		ck = apply_mask(key, mask, i, 14);
-		ksa(ks, ck);
-		pt = dec(apply_ipi(cta[0]), ks, 6);
-		if (pt == c->pt[0]) {
-			printf("ck %lx\n", ck);
-			assert(ck == c->key);
+	/* S6. */
+	if (res[0][5] == res[1][5]) {
+		sk[5].c = 1;
+		sk[5].keys[0] = 0x3f - bsr(res[0][5]);
+	} else {
+		sk[5].c = 2;
+		sk[5].keys[0] = 0x3f - bsr(res[0][5]);
+		sk[5].keys[1] = 0x3f - bsr(res[1][5]);
+	}
+
+	memset(ki, 0xff, sizeof(ki));
+	while (1) {
+		key = next_subkey(ki, sk);
+		if (key == (uint64_t)-1)
+			break;
+		/* S3 is not available. Bruteforce. */
+		mask = 0xfc0000000ul;
+		reverse_ksa(&key, &mask, 6);
+		for (i = 0; i < (1 << 14); ++i) {
+			ck = apply_mask(key, mask, i, 14);
+			ksa(ks, ck);
+			pt = dec(apply_ipi(cta[0]), ks, 6);
+			if (pt == c->pt[0]) {
+				printf("ck %lx\n", ck);
+				assert(ck == c->key);
+				return;
+			}
 		}
 	}
+
+	/* Seed 0x59f6e4a2 forces the computation here. */
+	printf("Original subkey: %lx\n", c->ks[6]);
+	printf("Calculated subkeys (with S3_k set to 0):\n");
+	memset(ki, 0xff, sizeof(ki));
+	while (1) {
+		key = next_subkey(ki, sk);
+		if (key == (uint64_t)-1)
+			break;
+		printf("%lx\n", key);
+	}
+	printf("Retry with a different plaintext generator seed.\n");
 }
 
 int main()
@@ -366,12 +412,14 @@ int main()
 	int i;
 	uint64_t cta[NT];
 	struct dc6_ctx c;
-	uint8_t key[8];
+	uint8_t key[8] = {
+		0x9a,0x8c,0xe6,0x3a,0x60,0xf4,0xde,0x36
+	};
 
 	memset(&c, 0, sizeof(c));
 
 	/* Override the fixed key. */
-	assert(getrandom(key, 8, 0) == 8);
+	//assert(getrandom(key, 8, 0) == 8);
 
 	/* Seed the RNG used to generate the plaintext bytes. */
 	c.seed = time(NULL);
