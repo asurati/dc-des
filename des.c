@@ -20,7 +20,7 @@
 /* Assumes little-endian, LP64 model. */
 
 #include <assert.h>
-#include <stdio.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -526,4 +526,79 @@ uint64_t apply_mask(uint64_t key, uint64_t mask, int v, int w)
 	return key | ev;
 }
 
+void split_subkey(uint8_t keys[8], uint64_t key)
+{
+	int i;
+
+	for (i = 7; i >= 0; --i, key >>= 6)
+		keys[i] = key & 0x3f;
+}
+
+uint64_t combine_subkey(const uint8_t keys[8])
+{
+	int i;
+	uint64_t key;
+
+	key = 0;
+	for (i = 0; i < 8; ++i) {
+		key <<= 6;
+		key |= keys[i];
+	}
+
+	return key;
+}
+
+uint64_t next_subkey(int ki[8], const struct sbox_key sk[8])
+{
+	int i;
+	uint8_t keys[8];
+
+	/* Ensure nonzero limits for the counters. */
+	for (i = 0; i < 8; ++i)
+		assert(sk[i].c);
+
+	for (i = 0; i < 8; ++i)
+		if (ki[i] != -1)
+			break;
+
+	/* If all the entries are -1, this is the initial call. */
+	if (i == 8) {
+		memset(ki, 0, sizeof(int) * 8);
+	} else {
+
+		for (i = 7; i >= 0; --i) {
+			++ki[i];
+			if (ki[i] < sk[i].c)
+				break;
+			ki[i] = 0;
+		}
+
+		/* Overflow. */
+		if (i == -1)
+			return (uint64_t)-1;
+	}
+
+	for (i = 0; i < 8; ++i)
+		keys[i] = sk[i].keys[ki[i]];
+
+	return combine_subkey(keys);
+}
+
+bool contains(const struct sbox_key sk[8], uint64_t key)
+{
+	int i, j;
+	uint8_t keys[8];
+
+	split_subkey(keys, key);
+
+	for (i = 0; i < 8; ++i) {
+		for (j = 0; j < sk[i].c; ++j)
+			if (sk[i].keys[j] == keys[i])
+				break;
+		if (j == sk[i].c)
+			return false;
+	}
+
+	return true;
+}
 

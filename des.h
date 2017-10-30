@@ -23,6 +23,11 @@
 
 #define DES_KEY_XCARE_MASK		0x0101010101010101
 
+struct sbox_key {
+	int c;
+	uint8_t keys[64];
+};
+
 uint64_t	apply_ip(uint64_t a);
 uint64_t	apply_ipi(uint64_t a);
 uint64_t	expand(uint32_t a);
@@ -42,4 +47,8 @@ uint32_t	desf(uint32_t r, uint64_t k);
 uint64_t	dec(uint64_t cph, const uint64_t ks[17], int nr);
 uint64_t	enc(uint64_t msg, const uint64_t ks[17], int nr);
 uint64_t	apply_mask(uint64_t key, uint64_t mask, int v, int w);
+void		split_subkey(uint8_t keys[8], uint64_t key);
+uint64_t	combine_subkey(const uint8_t keys[8]);
+uint64_t	next_subkey(int ki[8], const struct sbox_key sk[8]);
+bool		contains(const struct sbox_key sk[8], uint64_t key);
 #endif
