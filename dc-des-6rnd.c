@@ -345,32 +345,26 @@ static void find_key(const uint64_t cta[NT], const struct dc6_ctx *c)
 	sk[7].keys[0] = 0x3f - bsr(res[0][7]);
 
 	/* S2. */
-	if (res[0][1] == res[1][1]) {
-		sk[1].c = 1;
-		sk[1].keys[0] = 0x3f - bsr(res[0][1]);
-	} else {
+	sk[1].c = 1;
+	sk[1].keys[0] = 0x3f - bsr(res[0][1]);
+	if (res[0][1] != res[1][1]) {
 		sk[1].c = 2;
-		sk[1].keys[0] = 0x3f - bsr(res[0][1]);
 		sk[1].keys[1] = 0x3f - bsr(res[1][1]);
 	}
 
 	/* S5. */
-	if (res[0][4] == res[1][4]) {
-		sk[4].c = 1;
-		sk[4].keys[0] = 0x3f - bsr(res[0][4]);
-	} else {
+	sk[4].c = 1;
+	sk[4].keys[0] = 0x3f - bsr(res[0][4]);
+	if (res[0][4] != res[1][4]) {
 		sk[4].c = 2;
-		sk[4].keys[0] = 0x3f - bsr(res[0][4]);
 		sk[4].keys[1] = 0x3f - bsr(res[1][4]);
 	}
 
 	/* S6. */
-	if (res[0][5] == res[1][5]) {
-		sk[5].c = 1;
-		sk[5].keys[0] = 0x3f - bsr(res[0][5]);
-	} else {
+	sk[5].c = 1;
+	sk[5].keys[0] = 0x3f - bsr(res[0][5]);
+	if (res[0][5] != res[1][5]) {
 		sk[5].c = 2;
-		sk[5].keys[0] = 0x3f - bsr(res[0][5]);
 		sk[5].keys[1] = 0x3f - bsr(res[1][5]);
 	}
 
