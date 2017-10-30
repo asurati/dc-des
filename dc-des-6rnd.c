@@ -315,12 +315,14 @@ static void find_key(const uint64_t cta[NT], const struct dc6_ctx *c)
 	/* Apply Omega1. */
 	memset(km, 0, sizeof(km));
 	smask[0] = bf_sbox_key(km, cta, c, 0);
-	assert(find_pairs_set(res[0], km, smask[0]));
+	if (!find_pairs_set(res[0], km, smask[0]))
+		goto exit;
 
 	/* Apply Omega2. */
 	memset(km, 0, sizeof(km));
 	smask[1] = bf_sbox_key(km, cta, c, 1);
-	assert(find_pairs_set(res[1], km, smask[1]));
+	if(!find_pairs_set(res[1], km, smask[1]))
+		goto exit;
 
 	/* Setup the possible subkeys for each SBOX. */
 
@@ -388,7 +390,7 @@ static void find_key(const uint64_t cta[NT], const struct dc6_ctx *c)
 		}
 	}
 
-	/* Seed 0x59f6e4a2 forces the computation here. */
+	/* Seeds 0x59f6e4a2, 0x59f6ea52 forces the computation here. */
 	printf("Original subkey: %lx\n", c->ks[6]);
 	printf("Calculated subkeys (with S3_k set to 0):\n");
 	memset(ki, 0xff, sizeof(ki));
@@ -399,6 +401,12 @@ static void find_key(const uint64_t cta[NT], const struct dc6_ctx *c)
 		printf("%lx\n", key);
 	}
 	printf("Retry with a different plaintext generator seed.\n");
+	return;
+exit:
+	/* Seed 0x59f6e88d forces the computation here. */
+	printf("Could not find a set with single suggested key per SBOX.\n");
+	printf("Retry with a different plaintext generator seed, or\n");
+	printf("relax the requirements in the find_pairs_set function.\n");
 }
 
 int main()
@@ -406,14 +414,17 @@ int main()
 	int i;
 	uint64_t cta[NT];
 	struct dc6_ctx c;
+	uint8_t key[8];
+	/*
 	uint8_t key[8] = {
 		0x9a,0x8c,0xe6,0x3a,0x60,0xf4,0xde,0x36
 	};
+	*/
 
 	memset(&c, 0, sizeof(c));
 
 	/* Override the fixed key. */
-	//assert(getrandom(key, 8, 0) == 8);
+	assert(getrandom(key, 8, 0) == 8);
 
 	/* Seed the RNG used to generate the plaintext bytes. */
 	c.seed = time(NULL);
