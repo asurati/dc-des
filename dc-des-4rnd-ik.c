@@ -455,7 +455,7 @@ static void find_k4(const uint64_t cta[NT], const struct dc4_ctx *c)
 			bret = true;
 	}
 
-	/* If a set of valid subkeys are not found, fire the assert. */
+	/* If a set of valid subkeys is not found, fire the assert. */
 	assert(bret);
 }
 
